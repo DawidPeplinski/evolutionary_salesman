@@ -2,10 +2,11 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <time.h>
+#include <limits.h>
+#include <omp.h>
 
 struct City
 {
-
     int cost;
     int distance;
     int time;
@@ -90,6 +91,7 @@ void allocateCities(struct Map *map)
 void generateParameters(struct Map *map, struct GenerationParameters params)
 {
     int i, j;
+    int disconnected = 0;
     for (i = 0; i < map->n; i++) {
         for (j = 0; j < i; j++) {
             struct City city;
@@ -100,6 +102,7 @@ void generateParameters(struct Map *map, struct GenerationParameters params)
 
             if (city.distance > params.distance_cutoff_threshold) {
                 city = DISCONNECTED_CITY;
+                disconnected++;
             }
 
             map->cities[i][j] = city;
@@ -108,6 +111,7 @@ void generateParameters(struct Map *map, struct GenerationParameters params)
 
         map->cities[i][i] = DISCONNECTED_CITY;
     }
+    printf("%d connections cut off.\n", disconnected);
 }
 
 void printMap(struct Map *map)
@@ -144,19 +148,18 @@ int validateMap(struct Map *map)
 {
     int i;
     int j;
-    unsigned char is_orphan;
-
+    int connections;
     for (i = 0; i < map->n; i++) { 
-        is_orphan = 1;
+        connections = 0;
+        
         for (j = 0; j < map->n; j++) {
             if (map->cities[i][j].cost > 0
                || map->cities[j][i].cost > 0) {
                 
-                is_orphan = 0;
-                break;
+                connections++;
             }
         }
-        if (is_orphan) {
+        if (connections <= 1) {
             return 0;
         } 
     }  
@@ -284,37 +287,61 @@ void mutatePopulation(struct Population *pop)
 
 void randomPopulation(struct Population *pop)
 {
-    int i, j;
+    int i, j, c;
     int *indices = malloc(sizeof(*indices) * pop->map->n);
 
+    clock_t t = clock();
     for (i = 0; i < pop->n; i++) {
+        struct Specimen *spec = &pop->specimens[i];
 
         while (1) {
-            // Generate random perumation of indices
+            char valid = 1;
+            // Generate indices to permutate
             for (j = 0; j < pop->map->n; j++) {
                 indices[j] = j;
             }
             // 
             for (j = 0; j < pop->map->n; j++) {
                 int index;
-                if (j < pop->map->n-1) {
-                    index = rand()%(pop->map->n-j);
-                } else {
-                    index = 0;
-                }
-                
-                pop->specimens[i].sequence[j] = indices[index];
+                c = 0;
+                while (1) {
+                    if (j < pop->map->n-1) {
+                        index = rand()%(pop->map->n-j);
+                    } else {
+                        index = 0;
+                    }
+                    c++;
+                    if (j > 0 && c < pop->map->n*2
+                        && !isCityConnected(pop->map->cities[spec->sequence[j-1]][indices[index]])) {
+                        //printf("retrying...\n");
+                        continue;
+                    }
+                    break;
+                } 
+
+                spec->sequence[j] = indices[index];
                 indices[index] = indices[pop->map->n-1-j];
+
+                if (j > 0 && !isCityConnected(pop->map->cities[spec->sequence[j-1]][spec->sequence[j]])) {
+                    valid = 0;
+                    break;
+                }
             }
-            
-            if (validateSequence(pop->specimens[i].sequence, pop->map)) {
+
+            if (valid) {
                 break;
             }
-            
+
         }
-        
-        printf("Specimen #%d generated.\n", i);
+
+        if (i) {
+            printf(" ");
+        }
+        printf("%d", i + 1);
     }
+    t = clock() - t;
+    printf("\n");
+    printf("Specimens generated in %lfs.\n", (double)t/CLOCKS_PER_SEC);
 
     scoreSpecimens(pop);
 
@@ -381,7 +408,7 @@ void printPopulation(struct Population *pop)
             if (j) {
                 printf(" ");
             }
-            printf("%d", spec->sequence[j]);
+            printf("%3d", spec->sequence[j]);
         }
 
         // scoreSpecimen(spec->sequence, pop->map, &cost, &distance, &time);
@@ -400,68 +427,179 @@ int equalScoreFunction(int cost, int distance, int time)
     return cost + distance + time;
 }
 
-void performTournament(struct Population *pop, struct Population *pop2)
+int distanceOnlyFunction(int cost, int distance, int time)
+{
+    return distance;
+}
+
+int comparePlayers(const void *vp1, const void *vp2)
+{
+    const struct Player *p1 = (const struct Player *) vp1;
+    const struct Player *p2 = (const struct Player *) vp2;
+
+    return p2->rank - p1->rank;
+}
+
+void performTournament(struct Population *pop, struct Population *pop2, int battles)
 {
     int n = pop->n + pop2->n;
     int seqlen = pop->map->n;
     struct Player *players = malloc(sizeof(*players)*n);
-    int i, c;
+    int i, j, c;
+    int *plseqs = malloc(sizeof(*players[0].sequence)*seqlen*n);
+    players[0].sequence = plseqs;
+    for (i = 1; i < n; i++) {
+        players[i].sequence = players[i-1].sequence + seqlen;
+    }
 
     c = 0;
+    // Copying specimens from "pop"
     for (i = 0; i < pop->n; i++) {
         players[c].rank = 0;
         players[c].score = pop->specimens[i].score;
-        players[c].sequence = malloc(sizeof(*players[c].sequence) * seqlen);
         memcpy(players[c].sequence, pop->specimens[i].sequence, sizeof(int)*seqlen);
+        c++;
     }
 
-    //for (j = 0; )
+    // Copying specimens from "pop2"
+    for (i = 0; i < pop2->n; i++) {
+        players[c].rank = 0;
+        players[c].score = pop2->specimens[i].score;
+        memcpy(players[c].sequence, pop2->specimens[i].sequence, sizeof(int)*seqlen);
+        c++;
+    }
+
+    // Preforming the tournament
+    for (i = 0; i < n; i++) {
+        for (j = 0; j < battles; j++) {
+            do {
+                c = rand()%n;
+            } while(c == i);
+
+            if (players[i].score < players[c].score) {
+                players[i].rank++;
+            }
+        }
+    }
+
+    // Sorting players
+    qsort(players, n, sizeof(*players), comparePlayers);
+    /*
+    printf("Tournament results (%d participants):\n", n);
+    for (i = 0; i < n; i++) {
+        printf("#%2d R%-3d ", i, players[i].rank);
+        for (j = 0; j < seqlen; j++) {
+            if (j) {
+                printf(" ");
+            }
+            printf("%3d", players[i].sequence[j]);
+        }
+        printf(" S%-5d\n", players[i].score);
+    }
+    */
+    for (i = 0; i < pop->n; i++) {
+        pop->specimens[i].score = players[i].score;
+        memcpy(pop->specimens[i].sequence, players[i].sequence,
+                sizeof(*players[i].sequence)*seqlen);
+    }
+
+    free(plseqs);
+    free(players);
+}
+
+void measurePopulationStatistics(struct Population *pop)
+{
+    int i;
+    double mean = 0;
+    double var = 0;
+    
+    int min = INT_MAX;
+    int max = 0;
+
+    for (i = 0; i < pop->n; i++) {
+        int sc = pop->specimens[i].score;
+        mean += sc;
+        var += sc*sc;
+
+        if (sc < min) {
+            min = sc;
+        }
+        if (sc > max) {
+            max = sc;
+        }
+    }
+    mean /= pop->n;
+    var /= pop->n;
+    var -= mean*mean;
+
+    printf("     Average score: %lf\n", mean);
+    printf("          Variance: %lf\n", var);
+    printf("     Minimum score: %d\n", min);
+    printf("     Maximum score: %d\n", max);
+}
+
+void printGenerationParameters(struct GenerationParameters params)
+{
+    printf(" - cost: <%d;%d>\n", params.cost_min, params.cost_max);
+    printf(" - distance: <%d;%d>\n", params.distance_min, params.distance_max);
+    printf(" - distance cutoff threshold: %d\n", params.distance_cutoff_threshold);
+    printf(" - time-distance coefficient: <%f;%f>\n", params.time_coef_min, params.time_coef_max);
 }
 
 int main()
 {
-    enum {STEPS = 1};
-    enum {CITIES = 12};
-    enum {SPECIMENS = 32};
+    enum {STEPS = 500};
+    enum {CITIES = 10000};
+    enum {SPECIMENS = 200};
     int step;
     struct Map map;
     struct Population pop;
     struct Population pop2;
     
-    srand(time(NULL));
-
+    //srand(time(NULL));
+    srand(1234);
     struct GenerationParameters params;
 
     params.cost_min = 1;
-    params.cost_max = 10;
+    params.cost_max = 99;
     params.distance_min = 1;
     params.distance_max = 99;
-    params.distance_cutoff_threshold = 75;
-    params.time_coef_min = 0.1;
-    params.time_coef_max = 0.5;
+    params.distance_cutoff_threshold = 50;
+    params.time_coef_min = 0.2;
+    params.time_coef_max = 0.8;
 
+    printGenerationParameters(params);
     generateMap(&map, CITIES, params);
-    printf("### MAP ###\n");
-    printMap(&map);
-    printf("\n");
+    if (CITIES <= 12) {
+        printf("### %d CITIES ###\n", CITIES);
+        printMap(&map);
+        printf("\n");
+    } else {
+        printf("Generated a map of %d cities.\n", CITIES);
+    }
 
-    newPopulation(&pop, &map, SPECIMENS, equalScoreFunction);
+    newPopulation(&pop, &map, SPECIMENS, distanceOnlyFunction);
+    printf("Generating %d specimens.\n", SPECIMENS);
     randomPopulation(&pop);
-    newPopulation(&pop2, &map, SPECIMENS, equalScoreFunction);
+    newPopulation(&pop2, &map, SPECIMENS, distanceOnlyFunction);
 
     printf("### EVOLUTIONARY PROGRAMMING ###\n");
+    #if 0
     printf("Initial population:\n");
     printPopulation(&pop);
     printf("\n");
+    #endif
 
     for (step = 0; step < STEPS; step++) {
         printf("EP STEP #%d\n", step+1);
         copyPopulation(&pop2, &pop);
-        printPopulation(&pop2);
+        //printPopulation(&pop2);
         mutatePopulation(&pop2);
-        printf("Mutated population:\n");
-        printPopulation(&pop2);
-        //performTournament(&pop, &pop2);
+        //printf("Mutated population:\n");
+        //printPopulation(&pop2);
+        performTournament(&pop, &pop2, SPECIMENS);
+        //printPopulation(&pop);
+        measurePopulationStatistics(&pop);
     }
     
 
