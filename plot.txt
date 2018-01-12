@@ -1,0 +1,5 @@
+set xlabel "Steps"
+set ylabel "Score"
+plot 'stats.dat' using 1 with lines title "Average", \
+	 '' using 2 with lines title "Min", \
+	 '' using 3 with lines title "Max"

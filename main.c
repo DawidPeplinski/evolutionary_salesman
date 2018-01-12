@@ -507,7 +507,7 @@ void performTournament(struct Population *pop, struct Population *pop2, int batt
     free(players);
 }
 
-void measurePopulationStatistics(struct Population *pop)
+void measurePopulationStatistics(struct Population *pop, FILE *o)
 {
     int i;
     double mean = 0;
@@ -533,9 +533,10 @@ void measurePopulationStatistics(struct Population *pop)
     var -= mean*mean;
 
     printf("     Average score: %lf\n", mean);
-    printf("          Variance: %lf\n", var);
+    // printf("          Variance: %lf\n", var);
     printf("     Minimum score: %d\n", min);
     printf("     Maximum score: %d\n", max);
+    fprintf(o, "%lf %d %d\n", mean, min, max);
 }
 
 void printGenerationParameters(struct GenerationParameters params)
@@ -548,16 +549,19 @@ void printGenerationParameters(struct GenerationParameters params)
 
 int main()
 {
-    enum {STEPS = 500};
-    enum {CITIES = 10000};
-    enum {SPECIMENS = 200};
+    enum {STEPS = 5000};
+    enum {CITIES = 1000};
+    enum {SPECIMENS = 100};
     int step;
     struct Map map;
     struct Population pop;
     struct Population pop2;
     
-    //srand(time(NULL));
-    srand(1234);
+    FILE *output = fopen("stats.dat", "w");
+    fprintf(output, "# AVG MIN MAX\n");
+
+    srand(time(NULL));
+    //srand(1234);
     struct GenerationParameters params;
 
     params.cost_min = 1;
@@ -578,10 +582,10 @@ int main()
         printf("Generated a map of %d cities.\n", CITIES);
     }
 
-    newPopulation(&pop, &map, SPECIMENS, distanceOnlyFunction);
+    newPopulation(&pop, &map, SPECIMENS, equalScoreFunction);
     printf("Generating %d specimens.\n", SPECIMENS);
     randomPopulation(&pop);
-    newPopulation(&pop2, &map, SPECIMENS, distanceOnlyFunction);
+    newPopulation(&pop2, &map, SPECIMENS, equalSCoreFunction);
 
     printf("### EVOLUTIONARY PROGRAMMING ###\n");
     #if 0
@@ -599,10 +603,10 @@ int main()
         //printPopulation(&pop2);
         performTournament(&pop, &pop2, SPECIMENS);
         //printPopulation(&pop);
-        measurePopulationStatistics(&pop);
+        measurePopulationStatistics(&pop, output);
     }
     
-
+    fclose(output);
     freePopulation(&pop);
     freeMap(&map);
     return 0;
