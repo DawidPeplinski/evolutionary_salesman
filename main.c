@@ -607,7 +607,7 @@ int main()
         measurePopulationStatistics(&pop, output);
     }
     
-    printf("Wynik:\n");
+    printf("Najlepszy Wynik: %d\n", pop.specimens[0].score);
     for (i = 0; i < CITIES; i++) {
         if (i) {
             printf(" ");
