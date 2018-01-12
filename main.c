@@ -556,6 +556,7 @@ int main()
     struct Map map;
     struct Population pop;
     struct Population pop2;
+    int i;
     
     FILE *output = fopen("stats.dat", "w");
     fprintf(output, "# AVG MIN MAX\n");
@@ -585,7 +586,7 @@ int main()
     newPopulation(&pop, &map, SPECIMENS, equalScoreFunction);
     printf("Generating %d specimens.\n", SPECIMENS);
     randomPopulation(&pop);
-    newPopulation(&pop2, &map, SPECIMENS, equalSCoreFunction);
+    newPopulation(&pop2, &map, SPECIMENS, equalScoreFunction);
 
     printf("### EVOLUTIONARY PROGRAMMING ###\n");
     #if 0
@@ -606,6 +607,14 @@ int main()
         measurePopulationStatistics(&pop, output);
     }
     
+    printf("Wynik:\n");
+    for (i = 0; i < CITIES; i++) {
+        if (i) {
+            printf(" ");
+        }
+        printf("%d", pop.specimens[0].sequence[i]);
+    }
+
     fclose(output);
     freePopulation(&pop);
     freeMap(&map);
